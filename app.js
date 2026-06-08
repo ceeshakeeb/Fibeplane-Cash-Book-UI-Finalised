@@ -76,6 +76,8 @@ function load(){
 //  In a real app, swap this for Firebase/Supabase
 // ═══════════════════════════════════════════════
 let authMode='login';
+// Track whether user explicitly signed out (prevents ghost re-login)
+let _userExplicitlySignedOut = localStorage.getItem('fp_signed_out') === '1';
 function switchAuthTab(m){
   authMode=m;
   document.getElementById('tabLogin').classList.toggle('active',m==='login');
@@ -2160,10 +2162,6 @@ handleGoogleAuth = async function(){
    toast('Login successful');
  }catch(e){toast(e.message);}
 }
-
-// Track whether user explicitly signed out (prevents ghost re-login)
-let _userExplicitlySignedOut = localStorage.getItem('fp_signed_out') === '1';
-
 window.addEventListener('load',()=>{
  // Prevent pull-to-refresh on mobile from reloading page
  document.body.style.overscrollBehavior='none';
