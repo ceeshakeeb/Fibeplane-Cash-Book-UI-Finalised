@@ -745,7 +745,7 @@ async function joinBook(){
   const joinBtn=document.querySelector('#sheetInner .btn-primary');
   if(joinBtn){joinBtn.textContent='Searching...';joinBtn.disabled=true;}
   
-  let found=null;let foundOwnerId=null;
+  let found=null;let foundOwnerId=null;let foundOwnerKey=null;
   
   // Search Firebase expenseData index node (fast lookup)
   if(window.db){
@@ -786,7 +786,7 @@ async function joinBook(){
         for(const k of cacheKeys){
           const d=JSON.parse(localStorage.getItem(k)||'{}');
           const b=(d.books||[]).find(b=>b.id===id);
-          if(b){found=b;foundOwnerId=u.id;break;}
+          if(b){found=b;foundOwnerId=u.id;foundOwnerKey=k;break;}
         }
         if(found)break;
       }catch{}
@@ -2163,18 +2163,22 @@ handleGoogleAuth = async function(){
  }catch(e){toast(e.message);}
 }
 window.addEventListener('load',()=>{
- // Prevent pull-to-refresh on mobile from reloading page
  document.body.style.overscrollBehavior='none';
  document.documentElement.style.overscrollBehavior='none';
- if(!window.onAuthStateChangedFirebase) return;
+});
+// Register Firebase auth listener immediately to avoid race condition
+// where onAuthStateChanged fires before load event
+(function registerAuthListener(){
+ if(!window.onAuthStateChangedFirebase || !window.auth){
+   setTimeout(registerAuthListener,100);
+   return;
+ }
  window.onAuthStateChangedFirebase(window.auth, async(user)=>{
    if(!user) return;
-   // If user explicitly signed out, sign them out of Firebase too and stop
    if(_userExplicitlySignedOut){
      try{await window.signOutFirebase(window.auth);}catch(e){}
      return;
    }
-   // Don't auto-login if already showing main screen (prevents back-nav ghost login)
    if(document.getElementById('mainScreen').classList.contains('active')) return;
    let name=user.displayName||'User';
    try{
@@ -2185,4 +2189,4 @@ window.addEventListener('load',()=>{
    }catch(e){}
    loginUser({id:user.uid,name,email:user.email,initials:name.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase()});
  });
-});
+})();
