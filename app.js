@@ -2125,43 +2125,67 @@ async function saveUserData(){
  }
 }
 
-handleAuth = async function(){
- const email=document.getElementById('fEmail').value.trim();
- const pass=document.getElementById('fPassword').value;
- const name=(document.getElementById('fName')?.value||'').trim();
- const err=document.getElementById('authErr');
- if(!email||!pass){err.textContent='Please fill in all fields.';err.style.display='block';return;}
- try{
-   if(authMode==='register'){
-      const cred=await window.createUserWithEmailAndPassword(window.auth,email,pass);
-      await window.dbSet(window.dbRef(window.db,'users/'+cred.user.uid),{name,email});
-   }else{
-      await window.signInWithEmailAndPassword(window.auth,email,pass);
-   }
-   err.style.display='none';
- }catch(e){
-   err.style.display='block';
-   const code=e.code||'';
-   if(code==='auth/user-not-found'||code==='auth/invalid-credential')err.textContent='No account found with this email.';
-   else if(code==='auth/wrong-password')err.textContent='Incorrect password. Please try again.';
-   else if(code==='auth/too-many-requests')err.textContent='Too many attempts. Please wait a moment.';
-   else if(code==='auth/email-already-in-use')err.textContent='Email already registered. Please sign in.';
-   else if(code==='auth/weak-password')err.textContent='Password must be at least 6 characters.';
-   else if(code==='auth/network-request-failed')err.textContent='No internet connection. Check your network.';
-   else if(code==='auth/invalid-email')err.textContent='Invalid email address.';
-   else err.textContent=e.message||'Login failed. Please try again.';
- }
-}
+// Override handleAuth + handleGoogleAuth once Firebase is ready
+(function waitForFirebase(){
+  if(!window.auth || !window.signInWithEmailAndPassword || !window.createUserWithEmailAndPassword){
+    setTimeout(waitForFirebase, 100);
+    return;
+  }
 
-handleGoogleAuth = async function(){
- try{
-   const result=await window.signInWithPopup(window.auth, new window.GoogleAuthProvider());
-   const u=result.user;
-   await window.dbSet(window.dbRef(window.db,'users/'+u.uid),{name:u.displayName,email:u.email});
-   loginUser({id:u.uid,name:u.displayName||'User',email:u.email,initials:(u.displayName||'U').split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase()});
-   toast('Login successful');
- }catch(e){toast(e.message);}
-}
+  handleAuth = async function(){
+    const email=document.getElementById('fEmail').value.trim();
+    const pass=document.getElementById('fPassword').value;
+    const name=(document.getElementById('fName')?.value||'').trim();
+    const err=document.getElementById('authErr');
+    err.style.display='none';
+    if(!email||!pass){err.textContent='Please fill in all fields.';err.style.display='block';return;}
+    try{
+      let fbUser;
+      if(authMode==='register'){
+        const cred=await window.createUserWithEmailAndPassword(window.auth,email,pass);
+        fbUser=cred.user;
+        const saveName=name||email.split('@')[0];
+        await window.dbSet(window.dbRef(window.db,'users/'+fbUser.uid),{name:saveName,email});
+        loginUser({id:fbUser.uid,name:saveName,email:fbUser.email,initials:saveName.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase()});
+      }else{
+        const cred=await window.signInWithEmailAndPassword(window.auth,email,pass);
+        fbUser=cred.user;
+        let name=fbUser.displayName||'User';
+        try{
+          const snap=await window.dbGet(window.dbRef(window.db,'users/'+fbUser.uid));
+          if(snap.exists()){const p=snap.val();name=p.name||name;}
+          const ds=await window.dbGet(window.dbRef(window.db,'expenseData/'+fbUser.uid));
+          if(ds.exists()) Object.assign(S, ds.val());
+        }catch(e){}
+        loginUser({id:fbUser.uid,name,email:fbUser.email,initials:name.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase()});
+      }
+    }catch(e){
+      err.style.display='block';
+      const code=e.code||'';
+      if(code==='auth/user-not-found'||code==='auth/invalid-credential')err.textContent='No account found with this email.';
+      else if(code==='auth/wrong-password')err.textContent='Incorrect password. Please try again.';
+      else if(code==='auth/too-many-requests')err.textContent='Too many attempts. Please wait a moment.';
+      else if(code==='auth/email-already-in-use')err.textContent='Email already registered. Please sign in.';
+      else if(code==='auth/weak-password')err.textContent='Password must be at least 6 characters.';
+      else if(code==='auth/network-request-failed')err.textContent='No internet connection. Check your network.';
+      else if(code==='auth/invalid-email')err.textContent='Invalid email address.';
+      else err.textContent=e.message||'Login failed. Please try again.';
+    }
+  };
+
+  handleGoogleAuth = async function(){
+    try{
+      const result=await window.signInWithPopup(window.auth, new window.GoogleAuthProvider());
+      const u=result.user;
+      const name=u.displayName||'User';
+      await window.dbSet(window.dbRef(window.db,'users/'+u.uid),{name,email:u.email});
+      loginUser({id:u.uid,name,email:u.email,initials:name.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase()});
+    }catch(e){
+      const code=e.code||'';
+      if(code!=='auth/popup-closed-by-user') toast(e.message||'Google sign-in failed.');
+    }
+  };
+})();
 window.addEventListener('load',()=>{
  document.body.style.overscrollBehavior='none';
  document.documentElement.style.overscrollBehavior='none';
