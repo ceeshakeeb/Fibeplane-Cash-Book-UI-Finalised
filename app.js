@@ -145,12 +145,17 @@ function loginUser(user){
       });
     }catch(e){}
   }
-  // Merge any data for this user
-  const key='fp_data_'+user.id;
-  try{
-    const raw=localStorage.getItem(key);
-    if(raw){const d=JSON.parse(raw);Object.assign(S,d);}
-  }catch{}
+  // Load local cache — Firebase data (loaded by the caller before loginUser) takes priority,
+  // so only use the local cache if S has no books yet (i.e. Firebase didn't load anything).
+  if(!S.books || !S.books.length){
+    const cacheKeys=['fp_cache_'+user.id, 'fp_data_'+user.id];
+    for(const key of cacheKeys){
+      try{
+        const raw=localStorage.getItem(key);
+        if(raw){const d=JSON.parse(raw); Object.assign(S,d); break;}
+      }catch{}
+    }
+  }
   S.user={id:user.id,name:user.name,email:user.email,initials:user.initials||'U'};
   // Ensure default book exists
   if(!S.books||!S.books.length){
@@ -302,11 +307,8 @@ function guestBlocked(){
 
   return false;
 }
-function saveUserData(){
-  if(!S.user)return;
-  const key='fp_data_'+S.user.id;
-  localStorage.setItem(key,JSON.stringify({books:S.books,currentBookId:S.currentBookId,transactions:S.transactions,categories:S.categories,currentMonth:S.currentMonth}));
-}
+// saveUserData is defined near the bottom of this file (Firebase version).
+// Do NOT add a second definition here — it would shadow the Firebase one.
 
 // ═══════════════════════════════════════════════
 //  BOOKS
@@ -1757,7 +1759,7 @@ function renderProfilePage(){
 }
 
 function confirmLogout(){
-  if(confirm('Sign out of Flyover?'))logout();
+  if(confirm('Sign out of Fiberplane?'))logout();
 }
 
 function openEditProfileSheet(){
@@ -1950,7 +1952,7 @@ function exportCSV(){
   const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');a.href=url;a.download='Flyover_'+currentBook().name+'.csv';a.click();
+  const a=document.createElement('a');a.href=url;a.download='fiberplane_'+currentBook().name+'.csv';a.click();
   toast('CSV exported ✓');
 }
 function exportPDF(){
@@ -1980,7 +1982,7 @@ function exportPDF(){
   const balance=totalIncome-totalExpense;
 
   doc.setFontSize(18);
-  doc.text('Flyover Expense Report',14,15);
+  doc.text('Fiberplane Expense Report',14,15);
 
   doc.setFontSize(11);
   doc.text(`Book: ${book.name}`,14,25);
@@ -2023,7 +2025,7 @@ doc.text(
     }
   });
 
-  doc.save(`Flyover-${book.name}.pdf`);
+  doc.save(`fiberplane-${book.name}.pdf`);
 
   toast('PDF exported');
 }
@@ -2091,32 +2093,43 @@ function showSyncIndicator(state){
 // ═══════════════════════════════════════════════
 //  BOOT
 // ═══════════════════════════════════════════════
+// NOTE: We do NOT call loginUser() here from localStorage anymore.
+// The Firebase onAuthStateChanged listener (at the bottom) handles session restore.
+// This avoids loading stale local data before Firebase has a chance to return fresh data.
+// load() is still called to populate S with any cached state for offline fallback.
 load();
-if(S.user){
-  // Resume session
-  const users=getUsers();
-  const u=users.find(u=>u.id===S.user.id);
-  if(u)loginUser(u);
-}
 
 
 
 // ===== FIREBASE OVERRIDES =====
 async function saveUserData(){
- if(!S.user || !window.db) return;
- // Cache everything locally
- localStorage.setItem('fp_cache_'+S.user.id,JSON.stringify({
-   books:S.books,currentBookId:S.currentBookId,
-   transactions:S.transactions,categories:S.categories,currentMonth:S.currentMonth
- }));
- // Personal data (non-shared txns + book list) → expenseData/{uid}
- const personalTxns=S.transactions.filter(t=>{
-   const b=S.books.find(bk=>bk.id===t.bookId);
-   return !b || !isSharedBook(t.bookId);
- });
- const data={books:S.books,currentBookId:S.currentBookId,transactions:personalTxns,categories:S.categories,currentMonth:S.currentMonth};
- try{ await window.dbSet(window.dbRef(window.db,'expenseData/'+S.user.id),data);}catch(e){console.log(e);}
- // Shared books → sharedBooks/{bookId}
+ if(!S.user) return;
+
+ // Always write local cache so offline / pre-Firebase-init works
+ const snapshot={
+   books:S.books, currentBookId:S.currentBookId,
+   transactions:S.transactions, categories:S.categories, currentMonth:S.currentMonth
+ };
+ localStorage.setItem('fp_cache_'+S.user.id, JSON.stringify(snapshot));
+
+ if(!window.db) return; // Firebase not ready yet — local cache is enough for now
+
+ showSyncIndicator('syncing');
+ try{
+   // Save ALL data (personal + shared) to expenseData/{uid} — Firebase is source of truth
+   const data={
+     books:S.books, currentBookId:S.currentBookId,
+     transactions:S.transactions,
+     categories:S.categories, currentMonth:S.currentMonth
+   };
+   await window.dbSet(window.dbRef(window.db,'expenseData/'+S.user.id), data);
+   showSyncIndicator('synced');
+ }catch(e){
+   console.log('saveUserData Firebase error:', e);
+   showSyncIndicator('error');
+ }
+
+ // Also push shared books to sharedBooks/{bookId} for real-time collaboration
  const sharedBookIds=[...new Set(
    S.books.filter(b=>isSharedBook(b.id)).map(b=>b.id)
  )];
